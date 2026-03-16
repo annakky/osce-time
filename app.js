@@ -28,7 +28,8 @@ const state = {
     start: false,
     twoMin: false,
     end: false
-  }
+  },
+  editDraft: null
 };
 
 const el = {
@@ -42,23 +43,29 @@ const el = {
   lapList: document.getElementById('lapList'),
   checklistSelect: document.getElementById('checklistSelect'),
   activeChecklist: document.getElementById('activeChecklist'),
+  resetChecklistBtn: document.getElementById('resetChecklistBtn'),
   manageToggleBtn: document.getElementById('manageToggleBtn'),
-  manageSection: document.getElementById('manageSection'),
-  newChecklistName: document.getElementById('newChecklistName'),
-  addChecklistBtn: document.getElementById('addChecklistBtn'),
-  manageChecklistSelect: document.getElementById('manageChecklistSelect'),
-  deleteChecklistBtn: document.getElementById('deleteChecklistBtn'),
-  renameChecklistInput: document.getElementById('renameChecklistInput'),
-  renameChecklistBtn: document.getElementById('renameChecklistBtn'),
-  newItemInput: document.getElementById('newItemInput'),
-  addItemBtn: document.getElementById('addItemBtn'),
-  manageItemsList: document.getElementById('manageItemsList')
+  manageModal: document.getElementById('manageModal'),
+  modalBackdrop: document.getElementById('modalBackdrop'),
+  modalChecklistSelect: document.getElementById('modalChecklistSelect'),
+  modalDeleteChecklistBtn: document.getElementById('modalDeleteChecklistBtn'),
+  modalNewChecklistName: document.getElementById('modalNewChecklistName'),
+  modalAddChecklistBtn: document.getElementById('modalAddChecklistBtn'),
+  modalRenameChecklistInput: document.getElementById('modalRenameChecklistInput'),
+  modalRenameChecklistBtn: document.getElementById('modalRenameChecklistBtn'),
+  modalNewItemInput: document.getElementById('modalNewItemInput'),
+  modalAddItemBtn: document.getElementById('modalAddItemBtn'),
+  modalItemsList: document.getElementById('modalItemsList'),
+  modalCancelBtn: document.getElementById('modalCancelBtn'),
+  modalSaveBtn: document.getElementById('modalSaveBtn')
 };
 
 void init();
 
 async function init() {
-  await syncChecklistsFromTxt();
+  if (!hasStoredData()) {
+    await bootstrapChecklistsFromTxt();
+  }
 
   el.durationInput.value = String(data.durationMin);
   state.targetMs = data.durationMin * 60 * 1000;
@@ -66,7 +73,6 @@ async function init() {
   renderChecklistSelects();
   resetChecklistRunState();
   renderActiveChecklist();
-  renderManageItems();
   renderLaps();
   renderTimer(0);
   updateButtons();
@@ -75,52 +81,52 @@ async function init() {
   bindEvents();
 }
 
-async function syncChecklistsFromTxt() {
+function hasStoredData() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  return !!raw;
+}
+
+async function bootstrapChecklistsFromTxt() {
   try {
-    const manifestRes = await fetch(`${MANIFEST_PATH}?t=${Date.now()}`, { cache: 'no-store' });
-    if (!manifestRes.ok) return;
-
-    const files = await manifestRes.json();
-    if (!Array.isArray(files) || files.length === 0) return;
-
-    const imported = [];
-    for (const file of files) {
-      if (typeof file !== 'string' || !file.toLowerCase().endsWith('.txt')) continue;
-
-      const txtRes = await fetch(`${encodeURI(file)}?t=${Date.now()}`, { cache: 'no-store' });
-      if (!txtRes.ok) continue;
-
-      const raw = await txtRes.text();
-      const items = raw
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0);
-
-      imported.push({
-        id: `file-${file}`,
-        name: file.replace(/\.txt$/i, ''),
-        items
-      });
-    }
-
+    const imported = await fetchTxtChecklists();
     if (imported.length === 0) return;
 
-    const map = new Map(data.checklists.map((c) => [c.id, c]));
-    imported.forEach((c) => map.set(c.id, c));
-    data.checklists = Array.from(map.values());
-
-    if (data.checklists.some((c) => c.id.startsWith('file-'))) {
-      data.checklists = data.checklists.filter((c) => c.id !== 'default-osce');
-    }
-
-    if (!getChecklistById(data.selectedChecklistId)) {
-      data.selectedChecklistId = data.checklists[0]?.id || '';
-    }
-
+    data.checklists = imported;
+    data.selectedChecklistId = imported[0].id;
     saveData();
   } catch (_) {
-    // file:// 로 직접 열면 fetch가 제한될 수 있으므로 기존 로컬 데이터로 계속 동작한다.
+    // txt 로딩 실패 시 기본 데이터로 동작
   }
+}
+
+async function fetchTxtChecklists() {
+  const manifestRes = await fetch(`${MANIFEST_PATH}?t=${Date.now()}`, { cache: 'no-store' });
+  if (!manifestRes.ok) return [];
+
+  const files = await manifestRes.json();
+  if (!Array.isArray(files)) return [];
+
+  const imported = [];
+  for (const file of files) {
+    if (typeof file !== 'string' || !file.toLowerCase().endsWith('.txt')) continue;
+
+    const txtRes = await fetch(`${encodeURI(file)}?t=${Date.now()}`, { cache: 'no-store' });
+    if (!txtRes.ok) continue;
+
+    const raw = await txtRes.text();
+    const items = raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    imported.push({
+      id: `file-${file}`,
+      name: file.replace(/\.txt$/i, ''),
+      items
+    });
+  }
+
+  return imported;
 }
 
 function bindEvents() {
@@ -138,6 +144,7 @@ function bindEvents() {
   el.pauseBtn.addEventListener('click', pauseTimer);
   el.lapBtn.addEventListener('click', addLap);
   el.resetBtn.addEventListener('click', hardReset);
+  el.resetChecklistBtn.addEventListener('click', resetChecklistStorageAndReload);
 
   el.checklistSelect.addEventListener('change', () => {
     if (state.running) {
@@ -151,16 +158,206 @@ function bindEvents() {
     renderActiveChecklist();
   });
 
-  el.manageToggleBtn.addEventListener('click', () => {
-    el.manageSection.classList.toggle('hidden');
+  el.manageToggleBtn.addEventListener('click', openManageModal);
+  el.modalBackdrop.addEventListener('click', closeManageModal);
+  el.modalCancelBtn.addEventListener('click', closeManageModal);
+  el.modalSaveBtn.addEventListener('click', applyManageModal);
+
+  el.modalChecklistSelect.addEventListener('change', renderModalItems);
+  el.modalAddChecklistBtn.addEventListener('click', modalAddChecklist);
+  el.modalDeleteChecklistBtn.addEventListener('click', modalDeleteChecklist);
+  el.modalRenameChecklistBtn.addEventListener('click', modalRenameChecklist);
+  el.modalAddItemBtn.addEventListener('click', modalAddItem);
+}
+
+function openManageModal() {
+  if (state.running) {
+    alert('타이머 진행 중에는 체크리스트를 수정할 수 없습니다.');
+    return;
+  }
+
+  state.editDraft = {
+    selectedId: data.selectedChecklistId,
+    checklists: structuredClone(data.checklists)
+  };
+
+  renderModalChecklistSelect();
+  renderModalItems();
+  el.manageModal.classList.remove('hidden');
+}
+
+function closeManageModal() {
+  state.editDraft = null;
+  el.manageModal.classList.add('hidden');
+}
+
+function applyManageModal() {
+  if (!state.editDraft) return;
+  if (state.editDraft.checklists.length === 0) {
+    alert('최소 1개의 체크리스트가 필요합니다.');
+    return;
+  }
+
+  data.checklists = structuredClone(state.editDraft.checklists);
+  data.selectedChecklistId = state.editDraft.selectedId;
+
+  if (!getChecklistById(data.selectedChecklistId)) {
+    data.selectedChecklistId = data.checklists[0]?.id || '';
+  }
+
+  saveData();
+  renderChecklistSelects();
+  resetChecklistRunState();
+  renderActiveChecklist();
+  closeManageModal();
+}
+
+function renderModalChecklistSelect() {
+  if (!state.editDraft) return;
+  fillSelect(el.modalChecklistSelect, state.editDraft.checklists, state.editDraft.selectedId);
+  el.modalChecklistSelect.value = state.editDraft.selectedId;
+}
+
+function renderModalItems() {
+  if (!state.editDraft) return;
+  state.editDraft.selectedId = el.modalChecklistSelect.value;
+
+  el.modalItemsList.innerHTML = '';
+  const target = getDraftChecklistById(state.editDraft.selectedId);
+
+  if (!target || target.items.length === 0) {
+    const li = document.createElement('li');
+    li.textContent = '항목이 없습니다.';
+    el.modalItemsList.appendChild(li);
+    return;
+  }
+
+  target.items.forEach((item, idx) => {
+    const li = document.createElement('li');
+    const row = document.createElement('div');
+    row.className = 'item-row';
+
+    const label = document.createElement('span');
+    label.textContent = item;
+
+    const del = document.createElement('button');
+    del.className = 'item-delete';
+    del.textContent = '삭제';
+    del.addEventListener('click', () => modalDeleteItem(idx));
+
+    row.appendChild(label);
+    row.appendChild(del);
+    li.appendChild(row);
+    el.modalItemsList.appendChild(li);
   });
+}
 
-  el.addChecklistBtn.addEventListener('click', addChecklist);
-  el.deleteChecklistBtn.addEventListener('click', deleteChecklist);
-  el.renameChecklistBtn.addEventListener('click', renameChecklist);
-  el.addItemBtn.addEventListener('click', addChecklistItem);
+function modalAddChecklist() {
+  if (!state.editDraft) return;
+  const name = el.modalNewChecklistName.value.trim();
+  if (!name) {
+    alert('체크리스트 이름을 입력하세요.');
+    return;
+  }
 
-  el.manageChecklistSelect.addEventListener('change', renderManageItems);
+  const id = `cl-${Date.now()}`;
+  state.editDraft.checklists.push({ id, name, items: [] });
+  state.editDraft.selectedId = id;
+  el.modalNewChecklistName.value = '';
+
+  renderModalChecklistSelect();
+  renderModalItems();
+}
+
+function modalDeleteChecklist() {
+  if (!state.editDraft) return;
+  const targetId = el.modalChecklistSelect.value;
+  if (!targetId) return;
+
+  if (state.editDraft.checklists.length === 1) {
+    alert('최소 1개의 체크리스트는 유지되어야 합니다.');
+    return;
+  }
+
+  state.editDraft.checklists = state.editDraft.checklists.filter((c) => c.id !== targetId);
+  state.editDraft.selectedId = state.editDraft.checklists[0].id;
+
+  renderModalChecklistSelect();
+  renderModalItems();
+}
+
+function modalRenameChecklist() {
+  if (!state.editDraft) return;
+  const targetId = el.modalChecklistSelect.value;
+  const name = el.modalRenameChecklistInput.value.trim();
+  if (!targetId || !name) {
+    alert('대상과 새 이름을 입력하세요.');
+    return;
+  }
+
+  const target = getDraftChecklistById(targetId);
+  if (!target) return;
+  target.name = name;
+  el.modalRenameChecklistInput.value = '';
+
+  renderModalChecklistSelect();
+}
+
+function modalAddItem() {
+  if (!state.editDraft) return;
+  const targetId = el.modalChecklistSelect.value;
+  const item = el.modalNewItemInput.value.trim();
+  if (!targetId || !item) {
+    alert('수정 대상과 항목명을 입력하세요.');
+    return;
+  }
+
+  const target = getDraftChecklistById(targetId);
+  if (!target) return;
+  target.items.push(item);
+  el.modalNewItemInput.value = '';
+
+  renderModalItems();
+}
+
+function modalDeleteItem(idx) {
+  if (!state.editDraft) return;
+  const target = getDraftChecklistById(el.modalChecklistSelect.value);
+  if (!target) return;
+  target.items.splice(idx, 1);
+  renderModalItems();
+}
+
+async function resetChecklistStorageAndReload() {
+  if (state.running) {
+    alert('타이머 진행 중에는 체크리스트를 초기화할 수 없습니다.');
+    return;
+  }
+
+  const confirmed = window.confirm('체크리스트를 초기화하면 로컬 수정 내용이 지워지고 txt 원본을 다시 불러옵니다. 진행할까요?');
+  if (!confirmed) return;
+
+  localStorage.removeItem(STORAGE_KEY);
+  data = structuredClone(defaultData);
+
+  await bootstrapChecklistsFromTxt();
+
+  state.editDraft = null;
+  el.manageModal.classList.add('hidden');
+
+  el.durationInput.value = String(data.durationMin);
+  state.targetMs = data.durationMin * 60 * 1000;
+  renderChecklistSelects();
+  resetChecklistRunState();
+  renderActiveChecklist();
+  updateButtons();
+  updateStatus();
+  renderTimer(state.pausedElapsedMs);
+}
+
+function getDraftChecklistById(id) {
+  if (!state.editDraft) return null;
+  return state.editDraft.checklists.find((c) => c.id === id) || null;
 }
 
 function startTimer() {
@@ -295,6 +492,8 @@ function updateButtons() {
   el.lapBtn.disabled = !state.running;
   el.durationInput.disabled = state.running || state.pausedElapsedMs > 0;
   el.checklistSelect.disabled = state.running;
+  el.resetChecklistBtn.disabled = state.running;
+  el.manageToggleBtn.disabled = state.running;
 }
 
 function resetChecklistRunState() {
@@ -349,7 +548,6 @@ function renderChecklistSelects() {
   }
 
   fillSelect(el.checklistSelect, options, data.selectedChecklistId);
-  fillSelect(el.manageChecklistSelect, options, data.selectedChecklistId);
 }
 
 function fillSelect(selectEl, items, selectedId) {
@@ -368,127 +566,6 @@ function fillSelect(selectEl, items, selectedId) {
     opt.textContent = c.name;
     if (c.id === selectedId) opt.selected = true;
     selectEl.appendChild(opt);
-  });
-}
-
-function addChecklist() {
-  const name = el.newChecklistName.value.trim();
-  if (!name) {
-    alert('체크리스트 이름을 입력하세요.');
-    return;
-  }
-
-  const id = `cl-${Date.now()}`;
-  data.checklists.push({ id, name, items: [] });
-  data.selectedChecklistId = id;
-  el.newChecklistName.value = '';
-
-  saveData();
-  renderChecklistSelects();
-  resetChecklistRunState();
-  renderActiveChecklist();
-  renderManageItems();
-}
-
-function deleteChecklist() {
-  const targetId = el.manageChecklistSelect.value;
-  if (!targetId) return;
-
-  if (data.checklists.length === 1) {
-    alert('최소 1개의 체크리스트는 유지되어야 합니다.');
-    return;
-  }
-
-  data.checklists = data.checklists.filter((c) => c.id !== targetId);
-  data.selectedChecklistId = data.checklists[0].id;
-
-  saveData();
-  renderChecklistSelects();
-  resetChecklistRunState();
-  renderActiveChecklist();
-  renderManageItems();
-}
-
-function renameChecklist() {
-  const targetId = el.manageChecklistSelect.value;
-  const name = el.renameChecklistInput.value.trim();
-  if (!targetId || !name) {
-    alert('대상과 새 이름을 입력하세요.');
-    return;
-  }
-
-  const target = getChecklistById(targetId);
-  if (!target) return;
-  target.name = name;
-  el.renameChecklistInput.value = '';
-
-  saveData();
-  renderChecklistSelects();
-  renderManageItems();
-}
-
-function addChecklistItem() {
-  const targetId = el.manageChecklistSelect.value;
-  const item = el.newItemInput.value.trim();
-  if (!targetId || !item) {
-    alert('수정 대상과 항목명을 입력하세요.');
-    return;
-  }
-
-  const target = getChecklistById(targetId);
-  if (!target) return;
-  target.items.push(item);
-  el.newItemInput.value = '';
-
-  saveData();
-  if (targetId === data.selectedChecklistId) {
-    resetChecklistRunState();
-    renderActiveChecklist();
-  }
-  renderManageItems();
-}
-
-function deleteChecklistItem(idx) {
-  const targetId = el.manageChecklistSelect.value;
-  const target = getChecklistById(targetId);
-  if (!target) return;
-  target.items.splice(idx, 1);
-
-  saveData();
-  if (targetId === data.selectedChecklistId) {
-    resetChecklistRunState();
-    renderActiveChecklist();
-  }
-  renderManageItems();
-}
-
-function renderManageItems() {
-  el.manageItemsList.innerHTML = '';
-  const target = getChecklistById(el.manageChecklistSelect.value);
-  if (!target || target.items.length === 0) {
-    const li = document.createElement('li');
-    li.textContent = '항목이 없습니다.';
-    el.manageItemsList.appendChild(li);
-    return;
-  }
-
-  target.items.forEach((item, idx) => {
-    const li = document.createElement('li');
-    const row = document.createElement('div');
-    row.className = 'item-row';
-
-    const label = document.createElement('span');
-    label.textContent = item;
-
-    const del = document.createElement('button');
-    del.className = 'item-delete';
-    del.textContent = '삭제';
-    del.addEventListener('click', () => deleteChecklistItem(idx));
-
-    row.appendChild(label);
-    row.appendChild(del);
-    li.appendChild(row);
-    el.manageItemsList.appendChild(li);
   });
 }
 

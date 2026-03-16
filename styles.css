@@ -167,7 +167,7 @@ body {
 
 .laps h2,
 .checklist-panel h2,
-.manage-section h3 {
+.modal-header h3 {
   margin: 0 0 8px;
 }
 
@@ -206,18 +206,6 @@ body {
   margin: 8px 0 12px;
 }
 
-.manage-section {
-  margin-top: 14px;
-  border-top: 1px dashed var(--line);
-  padding-top: 14px;
-  display: grid;
-  gap: 10px;
-}
-
-.hidden {
-  display: none;
-}
-
 .item-row {
   display: flex;
   justify-content: space-between;
@@ -235,8 +223,51 @@ body {
   font: inherit;
 }
 
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(11, 24, 34, 0.46);
+}
+
+.modal-card {
+  position: relative;
+  width: min(820px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 @media (max-width: 760px) {
   .panel {
     padding: 14px;
+  }
+
+  .modal-card {
+    padding: 12px;
   }
 }
