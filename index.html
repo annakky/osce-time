@@ -46,16 +46,17 @@
     <section class="panel checklist-panel">
       <div class="checklist-head">
         <h2>체크리스트</h2>
-        <button id="resetChecklistBtn" class="btn btn-small btn-danger">체크리스트 초기화</button>
-        <button id="manageToggleBtn" class="btn btn-small">체크리스트 수정</button>
+      </div>
+      <div class="checklist-select-row">
+        <select id="checklistSelect" class="checklist-inline-select"></select>
       </div>
 
-      <div class="checklist-selector">
-        <label for="checklistSelect">사용할 체크리스트 선택</label>
-        <select id="checklistSelect"></select>
+      <div class="checklist-actions">
+        <button id="resetChecklistBtn" class="btn btn-small btn-danger">초기화</button>
+        <button id="openAddChecklistBtn" class="btn btn-small">추가</button>
+        <button id="openEditChecklistBtn" class="btn btn-small">수정</button>
+        <button id="openDeleteChecklistBtn" class="btn btn-small btn-danger">삭제</button>
       </div>
-
-      <p class="helper">시험 시작 전에 체크리스트를 선택하세요. 시작 시 체크 상태는 자동 초기화됩니다.</p>
       <ul id="activeChecklist" class="active-checklist"></ul>
     </section>
   </main>
@@ -64,23 +65,12 @@
     <div class="modal-backdrop" id="modalBackdrop"></div>
     <section class="modal-card">
       <div class="modal-header">
-        <h3 id="manageModalTitle">체크리스트 수정</h3>
+        <h3 id="manageModalTitle">체크리스트 추가</h3>
       </div>
 
       <div class="manage-row">
-        <label for="modalChecklistSelect">수정 대상</label>
-        <select id="modalChecklistSelect"></select>
-        <button id="modalDeleteChecklistBtn" class="btn btn-small btn-danger">선택 삭제</button>
-      </div>
-
-      <div class="manage-row">
-        <input id="modalNewChecklistName" type="text" placeholder="새 체크리스트 이름" />
-        <button id="modalAddChecklistBtn" class="btn btn-small">체크리스트 추가</button>
-      </div>
-
-      <div class="manage-row">
-        <input id="modalRenameChecklistInput" type="text" placeholder="선택 체크리스트 이름 변경" />
-        <button id="modalRenameChecklistBtn" class="btn btn-small">이름 변경</button>
+        <label for="modalChecklistNameInput">이름</label>
+        <input id="modalChecklistNameInput" type="text" placeholder="체크리스트 이름 입력" />
       </div>
 
       <div class="manage-row">
@@ -92,7 +82,35 @@
 
       <div class="modal-actions">
         <button id="modalCancelBtn" class="btn">취소</button>
-        <button id="modalSaveBtn" class="btn btn-primary">완료</button>
+        <button id="modalSaveBtn" class="btn btn-primary">추가</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="deleteConfirmModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+    <div class="modal-backdrop" id="deleteModalBackdrop"></div>
+    <section class="modal-card modal-small">
+      <div class="modal-header">
+        <h3 id="deleteModalTitle">체크리스트 삭제</h3>
+      </div>
+      <p id="deleteModalText">정말로 삭제할까요?</p>
+      <div class="modal-actions">
+        <button id="deleteNoBtn" class="btn">아니오</button>
+        <button id="deleteYesBtn" class="btn btn-danger">예</button>
+      </div>
+    </section>
+  </div>
+
+  <div id="resetConfirmModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="resetModalTitle">
+    <div class="modal-backdrop" id="resetModalBackdrop"></div>
+    <section class="modal-card modal-small">
+      <div class="modal-header">
+        <h3 id="resetModalTitle">체크리스트 초기화</h3>
+      </div>
+      <p>초기화하면 로컬 수정 내용이 삭제되고 txt 원본으로 다시 불러옵니다. 진행할까요?</p>
+      <div class="modal-actions">
+        <button id="resetNoBtn" class="btn">아니오</button>
+        <button id="resetYesBtn" class="btn btn-danger">예</button>
       </div>
     </section>
   </div>

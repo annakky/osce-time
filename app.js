@@ -29,15 +29,22 @@ const state = {
     twoMin: false,
     end: false
   },
-  editDraft: null,
+  editModal: {
+    mode: null,
+    checklistId: null,
+    draft: null
+  },
   drag: {
     active: false,
-    mode: null,
     pointerId: null,
     sourceIndex: -1,
     placeholderEl: null,
-    ghostEl: null
-  }
+    ghostEl: null,
+    lastInsertIndex: null,
+    grabOffsetX: 0,
+    grabOffsetY: 0
+  },
+  deleteTargetId: null
 };
 
 const el = {
@@ -52,20 +59,30 @@ const el = {
   checklistSelect: document.getElementById('checklistSelect'),
   activeChecklist: document.getElementById('activeChecklist'),
   resetChecklistBtn: document.getElementById('resetChecklistBtn'),
-  manageToggleBtn: document.getElementById('manageToggleBtn'),
+  openAddChecklistBtn: document.getElementById('openAddChecklistBtn'),
+  openEditChecklistBtn: document.getElementById('openEditChecklistBtn'),
+  openDeleteChecklistBtn: document.getElementById('openDeleteChecklistBtn'),
+
   manageModal: document.getElementById('manageModal'),
   modalBackdrop: document.getElementById('modalBackdrop'),
-  modalChecklistSelect: document.getElementById('modalChecklistSelect'),
-  modalDeleteChecklistBtn: document.getElementById('modalDeleteChecklistBtn'),
-  modalNewChecklistName: document.getElementById('modalNewChecklistName'),
-  modalAddChecklistBtn: document.getElementById('modalAddChecklistBtn'),
-  modalRenameChecklistInput: document.getElementById('modalRenameChecklistInput'),
-  modalRenameChecklistBtn: document.getElementById('modalRenameChecklistBtn'),
+  manageModalTitle: document.getElementById('manageModalTitle'),
+  modalChecklistNameInput: document.getElementById('modalChecklistNameInput'),
   modalNewItemInput: document.getElementById('modalNewItemInput'),
   modalAddItemBtn: document.getElementById('modalAddItemBtn'),
   modalItemsList: document.getElementById('modalItemsList'),
   modalCancelBtn: document.getElementById('modalCancelBtn'),
-  modalSaveBtn: document.getElementById('modalSaveBtn')
+  modalSaveBtn: document.getElementById('modalSaveBtn'),
+
+  deleteConfirmModal: document.getElementById('deleteConfirmModal'),
+  deleteModalBackdrop: document.getElementById('deleteModalBackdrop'),
+  deleteModalText: document.getElementById('deleteModalText'),
+  deleteNoBtn: document.getElementById('deleteNoBtn'),
+  deleteYesBtn: document.getElementById('deleteYesBtn'),
+
+  resetConfirmModal: document.getElementById('resetConfirmModal'),
+  resetModalBackdrop: document.getElementById('resetModalBackdrop'),
+  resetNoBtn: document.getElementById('resetNoBtn'),
+  resetYesBtn: document.getElementById('resetYesBtn')
 };
 
 void init();
@@ -89,21 +106,77 @@ async function init() {
   bindEvents();
 }
 
+function bindEvents() {
+  el.durationInput.addEventListener('change', () => {
+    const val = clampNumber(parseInt(el.durationInput.value, 10), 1, 180, DEFAULT_DURATION_MIN);
+    data.durationMin = val;
+    state.targetMs = val * 60 * 1000;
+    saveData();
+    if (!state.running && state.pausedElapsedMs === 0) {
+      renderTimer(0);
+    }
+  });
+
+  el.startBtn.addEventListener('click', startTimer);
+  el.pauseBtn.addEventListener('click', pauseTimer);
+  el.lapBtn.addEventListener('click', addLap);
+  el.resetBtn.addEventListener('click', hardReset);
+
+  el.resetChecklistBtn.addEventListener('click', openResetConfirmModal);
+  if (el.openAddChecklistBtn) el.openAddChecklistBtn.addEventListener('click', openAddChecklistModal);
+  if (el.openEditChecklistBtn) el.openEditChecklistBtn.addEventListener('click', openEditChecklistModal);
+  if (el.openDeleteChecklistBtn) el.openDeleteChecklistBtn.addEventListener('click', openDeleteChecklistModal);
+
+  el.checklistSelect.addEventListener('change', () => {
+    if (state.running) {
+      alert('타이머 진행 중에는 체크리스트를 변경할 수 없습니다.');
+      el.checklistSelect.value = data.selectedChecklistId;
+      return;
+    }
+    data.selectedChecklistId = el.checklistSelect.value;
+    saveData();
+    resetChecklistRunState();
+    renderActiveChecklist();
+  });
+
+  el.modalBackdrop.addEventListener('click', closeManageModal);
+  el.modalCancelBtn.addEventListener('click', closeManageModal);
+  el.modalSaveBtn.addEventListener('click', saveManageModal);
+  el.modalAddItemBtn.addEventListener('click', addDraftItem);
+  el.modalNewItemInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      addDraftItem();
+    }
+  });
+
+  el.modalItemsList.addEventListener('pointerdown', onModalItemsPointerDown);
+  el.modalItemsList.addEventListener('pointermove', onModalItemsPointerMove);
+  el.modalItemsList.addEventListener('pointerup', onModalItemsPointerUpOrCancel);
+  el.modalItemsList.addEventListener('pointercancel', onModalItemsPointerUpOrCancel);
+
+  el.deleteModalBackdrop.addEventListener('click', closeDeleteModal);
+  el.deleteNoBtn.addEventListener('click', closeDeleteModal);
+  el.deleteYesBtn.addEventListener('click', confirmDeleteChecklist);
+
+  el.resetModalBackdrop.addEventListener('click', closeResetModal);
+  el.resetNoBtn.addEventListener('click', closeResetModal);
+  el.resetYesBtn.addEventListener('click', confirmResetChecklist);
+}
+
 function hasStoredData() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  return !!raw;
+  return !!localStorage.getItem(STORAGE_KEY);
 }
 
 async function bootstrapChecklistsFromTxt() {
   try {
     const imported = await fetchTxtChecklists();
     if (imported.length === 0) return;
-
     data.checklists = imported;
     data.selectedChecklistId = imported[0].id;
     saveData();
   } catch (_) {
-    // txt 로딩 실패 시 기본 데이터로 동작
+    // fallback to default
   }
 }
 
@@ -137,89 +210,70 @@ async function fetchTxtChecklists() {
   return imported;
 }
 
-function bindEvents() {
-  el.durationInput.addEventListener('change', () => {
-    const val = clampNumber(parseInt(el.durationInput.value, 10), 1, 180, DEFAULT_DURATION_MIN);
-    data.durationMin = val;
-    state.targetMs = val * 60 * 1000;
-    saveData();
-    if (!state.running && state.pausedElapsedMs === 0) {
-      renderTimer(0);
-    }
-  });
+function openAddChecklistModal() {
+  if (state.running) return;
+  const id = `cl-${Date.now()}`;
+  state.editModal.mode = 'add';
+  state.editModal.checklistId = id;
+  state.editModal.draft = { id, name: '', items: [] };
 
-  el.startBtn.addEventListener('click', startTimer);
-  el.pauseBtn.addEventListener('click', pauseTimer);
-  el.lapBtn.addEventListener('click', addLap);
-  el.resetBtn.addEventListener('click', hardReset);
-  el.resetChecklistBtn.addEventListener('click', resetChecklistStorageAndReload);
-
-  el.checklistSelect.addEventListener('change', () => {
-    if (state.running) {
-      alert('타이머 진행 중에는 체크리스트를 변경할 수 없습니다.');
-      el.checklistSelect.value = data.selectedChecklistId;
-      return;
-    }
-    data.selectedChecklistId = el.checklistSelect.value;
-    saveData();
-    resetChecklistRunState();
-    renderActiveChecklist();
-  });
-
-  el.manageToggleBtn.addEventListener('click', openManageModal);
-  el.modalBackdrop.addEventListener('click', closeManageModal);
-  el.modalCancelBtn.addEventListener('click', closeManageModal);
-  el.modalSaveBtn.addEventListener('click', applyManageModal);
-
-  el.modalChecklistSelect.addEventListener('change', renderModalItems);
-  el.modalAddChecklistBtn.addEventListener('click', modalAddChecklist);
-  el.modalDeleteChecklistBtn.addEventListener('click', modalDeleteChecklist);
-  el.modalRenameChecklistBtn.addEventListener('click', modalRenameChecklist);
-  el.modalAddItemBtn.addEventListener('click', modalAddItem);
-  el.modalItemsList.addEventListener('dragstart', onModalItemsDragStart);
-  el.modalItemsList.addEventListener('dragover', onModalItemsDragOver);
-  el.modalItemsList.addEventListener('drop', onModalItemsDrop);
-  el.modalItemsList.addEventListener('dragend', onModalItemsDragEnd);
-  el.modalItemsList.addEventListener('pointerdown', onModalItemsPointerDown);
-  el.modalItemsList.addEventListener('pointermove', onModalItemsPointerMove);
-  el.modalItemsList.addEventListener('pointerup', onModalItemsPointerUpOrCancel);
-  el.modalItemsList.addEventListener('pointercancel', onModalItemsPointerUpOrCancel);
+  el.manageModalTitle.textContent = '체크리스트 추가';
+  el.modalSaveBtn.textContent = '추가';
+  el.modalChecklistNameInput.value = '';
+  el.modalNewItemInput.value = '';
+  renderDraftItems();
+  el.manageModal.classList.remove('hidden');
 }
 
-function openManageModal() {
-  if (state.running) {
-    alert('타이머 진행 중에는 체크리스트를 수정할 수 없습니다.');
+function openEditChecklistModal() {
+  if (state.running) return;
+  const current = getChecklistById(data.selectedChecklistId);
+  if (!current) {
+    alert('수정할 체크리스트가 없습니다.');
     return;
   }
 
-  state.editDraft = {
-    selectedId: data.selectedChecklistId,
-    checklists: structuredClone(data.checklists)
-  };
+  state.editModal.mode = 'edit';
+  state.editModal.checklistId = current.id;
+  state.editModal.draft = structuredClone(current);
 
-  renderModalChecklistSelect();
-  renderModalItems();
+  el.manageModalTitle.textContent = '체크리스트 수정';
+  el.modalSaveBtn.textContent = '수정';
+  el.modalChecklistNameInput.value = current.name;
+  el.modalNewItemInput.value = '';
+  renderDraftItems();
   el.manageModal.classList.remove('hidden');
 }
 
 function closeManageModal() {
   cleanupModalDrag();
-  state.editDraft = null;
+  state.editModal.mode = null;
+  state.editModal.checklistId = null;
+  state.editModal.draft = null;
   el.manageModal.classList.add('hidden');
 }
 
-function applyManageModal() {
-  if (!state.editDraft) return;
-  if (state.editDraft.checklists.length === 0) {
-    alert('최소 1개의 체크리스트가 필요합니다.');
+function saveManageModal() {
+  if (!state.editModal.draft) return;
+
+  const name = el.modalChecklistNameInput.value.trim();
+  if (!name) {
+    alert('체크리스트 이름을 입력하세요.');
     return;
   }
 
-  data.checklists = structuredClone(state.editDraft.checklists);
-  data.selectedChecklistId = state.editDraft.selectedId;
+  state.editModal.draft.name = name;
 
-  if (!getChecklistById(data.selectedChecklistId)) {
-    data.selectedChecklistId = data.checklists[0]?.id || '';
+  if (state.editModal.mode === 'add') {
+    data.checklists.push(structuredClone(state.editModal.draft));
+    data.selectedChecklistId = state.editModal.draft.id;
+  } else if (state.editModal.mode === 'edit') {
+    const idx = data.checklists.findIndex((c) => c.id === state.editModal.checklistId);
+    if (idx < 0) {
+      alert('수정 대상을 찾을 수 없습니다.');
+      return;
+    }
+    data.checklists[idx] = structuredClone(state.editModal.draft);
   }
 
   saveData();
@@ -229,31 +283,39 @@ function applyManageModal() {
   closeManageModal();
 }
 
-function renderModalChecklistSelect() {
-  if (!state.editDraft) return;
-  fillSelect(el.modalChecklistSelect, state.editDraft.checklists, state.editDraft.selectedId);
-  el.modalChecklistSelect.value = state.editDraft.selectedId;
+function addDraftItem() {
+  if (!state.editModal.draft) return;
+  const item = el.modalNewItemInput.value.trim();
+  if (!item) {
+    alert('항목명을 입력하세요.');
+    return;
+  }
+  state.editModal.draft.items.push(item);
+  el.modalNewItemInput.value = '';
+  renderDraftItems();
 }
 
-function renderModalItems() {
-  if (!state.editDraft) return;
-  cleanupModalDrag();
-  state.editDraft.selectedId = el.modalChecklistSelect.value;
+function deleteDraftItem(index) {
+  if (!state.editModal.draft) return;
+  state.editModal.draft.items.splice(index, 1);
+  renderDraftItems();
+}
 
+function renderDraftItems() {
   el.modalItemsList.innerHTML = '';
-  const target = getDraftChecklistById(state.editDraft.selectedId);
+  const draft = state.editModal.draft;
 
-  if (!target || target.items.length === 0) {
+  if (!draft || draft.items.length === 0) {
     const li = document.createElement('li');
     li.textContent = '항목이 없습니다.';
     el.modalItemsList.appendChild(li);
     return;
   }
 
-  target.items.forEach((item, idx) => {
+  draft.items.forEach((item, idx) => {
     const li = document.createElement('li');
     li.className = 'draggable-item';
-    li.draggable = true;
+    li.draggable = false;
     li.dataset.index = String(idx);
 
     const row = document.createElement('div');
@@ -265,8 +327,7 @@ function renderModalItems() {
     const del = document.createElement('button');
     del.className = 'item-delete';
     del.textContent = '삭제';
-    del.setAttribute('draggable', 'false');
-    del.addEventListener('click', () => modalDeleteItem(idx));
+    del.addEventListener('click', () => deleteDraftItem(idx));
 
     row.appendChild(label);
     row.appendChild(del);
@@ -275,188 +336,78 @@ function renderModalItems() {
   });
 }
 
-function modalAddChecklist() {
-  if (!state.editDraft) return;
-  const name = el.modalNewChecklistName.value.trim();
-  if (!name) {
-    alert('체크리스트 이름을 입력하세요.');
+function openDeleteChecklistModal() {
+  if (state.running) return;
+  const current = getChecklistById(data.selectedChecklistId);
+  if (!current) {
+    alert('삭제할 체크리스트가 없습니다.');
     return;
   }
-
-  const id = `cl-${Date.now()}`;
-  state.editDraft.checklists.push({ id, name, items: [] });
-  state.editDraft.selectedId = id;
-  el.modalNewChecklistName.value = '';
-
-  renderModalChecklistSelect();
-  renderModalItems();
-}
-
-function modalDeleteChecklist() {
-  if (!state.editDraft) return;
-  const targetId = el.modalChecklistSelect.value;
-  if (!targetId) return;
-
-  if (state.editDraft.checklists.length === 1) {
+  if (data.checklists.length === 1) {
     alert('최소 1개의 체크리스트는 유지되어야 합니다.');
     return;
   }
 
-  state.editDraft.checklists = state.editDraft.checklists.filter((c) => c.id !== targetId);
-  state.editDraft.selectedId = state.editDraft.checklists[0].id;
-
-  renderModalChecklistSelect();
-  renderModalItems();
+  state.deleteTargetId = current.id;
+  el.deleteModalText.textContent = `'${current.name}' 체크리스트를 정말로 삭제할까요?`;
+  el.deleteConfirmModal.classList.remove('hidden');
 }
 
-function modalRenameChecklist() {
-  if (!state.editDraft) return;
-  const targetId = el.modalChecklistSelect.value;
-  const name = el.modalRenameChecklistInput.value.trim();
-  if (!targetId || !name) {
-    alert('대상과 새 이름을 입력하세요.');
+function closeDeleteModal() {
+  state.deleteTargetId = null;
+  el.deleteConfirmModal.classList.add('hidden');
+}
+
+function confirmDeleteChecklist() {
+  if (!state.deleteTargetId) return;
+
+  data.checklists = data.checklists.filter((c) => c.id !== state.deleteTargetId);
+  data.selectedChecklistId = data.checklists[0]?.id || '';
+
+  saveData();
+  renderChecklistSelects();
+  resetChecklistRunState();
+  renderActiveChecklist();
+  closeDeleteModal();
+}
+
+function openResetConfirmModal() {
+  if (state.running) {
+    alert('타이머 진행 중에는 체크리스트를 초기화할 수 없습니다.');
     return;
   }
-
-  const target = getDraftChecklistById(targetId);
-  if (!target) return;
-  target.name = name;
-  el.modalRenameChecklistInput.value = '';
-
-  renderModalChecklistSelect();
+  el.resetConfirmModal.classList.remove('hidden');
 }
 
-function modalAddItem() {
-  if (!state.editDraft) return;
-  const targetId = el.modalChecklistSelect.value;
-  const item = el.modalNewItemInput.value.trim();
-  if (!targetId || !item) {
-    alert('수정 대상과 항목명을 입력하세요.');
-    return;
-  }
-
-  const target = getDraftChecklistById(targetId);
-  if (!target) return;
-  target.items.push(item);
-  el.modalNewItemInput.value = '';
-
-  renderModalItems();
+function closeResetModal() {
+  el.resetConfirmModal.classList.add('hidden');
 }
 
-function modalDeleteItem(idx) {
-  if (!state.editDraft) return;
-  const target = getDraftChecklistById(el.modalChecklistSelect.value);
-  if (!target) return;
-  target.items.splice(idx, 1);
-  renderModalItems();
-}
-
-function onModalItemsDragStart(event) {
-  if (state.drag.mode === 'touch') return;
-  const itemEl = event.target.closest('.draggable-item');
-  if (!itemEl || !state.editDraft) return;
-
-  const sourceIndex = parseInt(itemEl.dataset.index || '-1', 10);
-  if (Number.isNaN(sourceIndex) || sourceIndex < 0) return;
-
-  state.drag.active = true;
-  state.drag.mode = 'mouse';
-  state.drag.sourceIndex = sourceIndex;
-
-  const placeholder = document.createElement('li');
-  placeholder.className = 'drag-placeholder';
-  placeholder.style.height = `${itemEl.getBoundingClientRect().height}px`;
-  placeholder.textContent = '여기에 놓기';
-  state.drag.placeholderEl = placeholder;
-
-  itemEl.classList.add('dragging');
-  itemEl.after(placeholder);
-
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', String(sourceIndex));
-  }
-}
-
-function onModalItemsDragOver(event) {
-  if (!state.drag.active || !state.drag.placeholderEl) return;
-  event.preventDefault();
-
-  const target = event.target.closest('.draggable-item');
-  const list = el.modalItemsList;
-  const placeholder = state.drag.placeholderEl;
-  const dragging = list.querySelector('.draggable-item.dragging');
-
-  if (!target || target === dragging) {
-    list.appendChild(placeholder);
-    return;
-  }
-
-  const rect = target.getBoundingClientRect();
-  const before = event.clientY < rect.top + rect.height / 2;
-  if (before) {
-    list.insertBefore(placeholder, target);
-  } else {
-    list.insertBefore(placeholder, target.nextSibling);
-  }
-}
-
-function onModalItemsDrop(event) {
-  if (!state.drag.active || !state.editDraft || !state.drag.placeholderEl) return;
-  event.preventDefault();
-
-  applyModalItemReorder();
-
-  cleanupModalDrag();
-  renderModalItems();
-}
-
-function onModalItemsDragEnd() {
-  if (!state.drag.active) return;
-  cleanupModalDrag();
-  renderModalItems();
+async function confirmResetChecklist() {
+  await resetChecklistStorageAndReload();
+  closeResetModal();
 }
 
 function cleanupModalDrag() {
   const dragging = el.modalItemsList.querySelector('.draggable-item.dragging');
   if (dragging) dragging.classList.remove('dragging');
-  if (state.drag.placeholderEl && state.drag.placeholderEl.parentNode) {
-    state.drag.placeholderEl.parentNode.removeChild(state.drag.placeholderEl);
-  }
-  if (state.drag.ghostEl && state.drag.ghostEl.parentNode) {
-    state.drag.ghostEl.parentNode.removeChild(state.drag.ghostEl);
-  }
+
+  if (state.drag.placeholderEl?.parentNode) state.drag.placeholderEl.parentNode.removeChild(state.drag.placeholderEl);
+  if (state.drag.ghostEl?.parentNode) state.drag.ghostEl.parentNode.removeChild(state.drag.ghostEl);
+
   state.drag.active = false;
-  state.drag.mode = null;
   state.drag.pointerId = null;
   state.drag.sourceIndex = -1;
   state.drag.placeholderEl = null;
   state.drag.ghostEl = null;
-}
-
-function applyModalItemReorder() {
-  const target = getDraftChecklistById(el.modalChecklistSelect.value);
-  if (!target || target.items.length <= 1) return;
-
-  const sourceIndex = state.drag.sourceIndex;
-  const children = Array.from(el.modalItemsList.children);
-  const placeholderIndex = children.indexOf(state.drag.placeholderEl);
-  if (sourceIndex < 0 || placeholderIndex < 0) return;
-
-  let insertIndex = 0;
-  for (let i = 0; i < placeholderIndex; i += 1) {
-    if (children[i].classList.contains('draggable-item') && !children[i].classList.contains('dragging')) {
-      insertIndex += 1;
-    }
-  }
-
-  const moved = target.items.splice(sourceIndex, 1)[0];
-  target.items.splice(insertIndex, 0, moved);
+  state.drag.lastInsertIndex = null;
+  state.drag.grabOffsetX = 0;
+  state.drag.grabOffsetY = 0;
 }
 
 function onModalItemsPointerDown(event) {
-  if (event.pointerType !== 'touch') return;
-  if (!state.editDraft) return;
+  if (event.pointerType === 'mouse' && event.button !== 0) return;
+  if (!state.editModal.draft) return;
   if (event.target.closest('.item-delete')) return;
 
   const itemEl = event.target.closest('.draggable-item');
@@ -469,13 +420,17 @@ function onModalItemsPointerDown(event) {
   cleanupModalDrag();
 
   state.drag.active = true;
-  state.drag.mode = 'touch';
   state.drag.pointerId = event.pointerId;
   state.drag.sourceIndex = sourceIndex;
+  state.drag.lastInsertIndex = sourceIndex;
+
+  const itemRect = itemEl.getBoundingClientRect();
+  state.drag.grabOffsetX = event.clientX - itemRect.left;
+  state.drag.grabOffsetY = event.clientY - itemRect.top;
 
   const placeholder = document.createElement('li');
   placeholder.className = 'drag-placeholder';
-  placeholder.style.height = `${itemEl.getBoundingClientRect().height}px`;
+  placeholder.style.height = `${itemRect.height}px`;
   placeholder.textContent = '여기에 놓기';
   state.drag.placeholderEl = placeholder;
 
@@ -484,74 +439,95 @@ function onModalItemsPointerDown(event) {
 
   const ghost = itemEl.cloneNode(true);
   ghost.classList.add('drag-ghost');
+  ghost.style.width = `${itemRect.width}px`;
   document.body.appendChild(ghost);
   state.drag.ghostEl = ghost;
-  moveTouchGhost(event.clientX, event.clientY);
+  moveGhost(event.clientX, event.clientY);
 }
 
 function onModalItemsPointerMove(event) {
-  if (!state.drag.active || state.drag.mode !== 'touch') return;
+  if (!state.drag.active) return;
   if (state.drag.pointerId !== event.pointerId) return;
 
   event.preventDefault();
-  moveTouchGhost(event.clientX, event.clientY);
-  movePlaceholderFromPoint(event.clientX, event.clientY);
+  moveGhost(event.clientX, event.clientY);
+  updatePlaceholderByY(event.clientY);
 }
 
 function onModalItemsPointerUpOrCancel(event) {
-  if (!state.drag.active || state.drag.mode !== 'touch') return;
+  if (!state.drag.active) return;
   if (state.drag.pointerId !== event.pointerId) return;
 
   event.preventDefault();
-  applyModalItemReorder();
+  applyDraftReorder();
   cleanupModalDrag();
-  renderModalItems();
+  renderDraftItems();
 }
 
-function moveTouchGhost(clientX, clientY) {
+function moveGhost(clientX, clientY) {
   if (!state.drag.ghostEl) return;
-  state.drag.ghostEl.style.left = `${clientX + 12}px`;
-  state.drag.ghostEl.style.top = `${clientY - 16}px`;
+  state.drag.ghostEl.style.left = `${clientX - state.drag.grabOffsetX}px`;
+  state.drag.ghostEl.style.top = `${clientY - state.drag.grabOffsetY}px`;
 }
 
-function movePlaceholderFromPoint(clientX, clientY) {
-  if (!state.drag.placeholderEl) return;
-  const pointEl = document.elementFromPoint(clientX, clientY);
-  const target = pointEl ? pointEl.closest('.draggable-item') : null;
-  const list = el.modalItemsList;
-  const placeholder = state.drag.placeholderEl;
-  const dragging = list.querySelector('.draggable-item.dragging');
+function updatePlaceholderByY(clientY) {
+  if (!state.drag.active || !state.drag.placeholderEl) return;
 
-  if (!target || target === dragging) {
-    list.appendChild(placeholder);
+  const list = el.modalItemsList;
+  const items = Array.from(list.querySelectorAll('.draggable-item:not(.dragging)'));
+  if (items.length === 0) {
+    list.appendChild(state.drag.placeholderEl);
+    state.drag.lastInsertIndex = 0;
     return;
   }
 
-  const rect = target.getBoundingClientRect();
-  const before = clientY < rect.top + rect.height / 2;
-  if (before) {
-    list.insertBefore(placeholder, target);
-  } else {
-    list.insertBefore(placeholder, target.nextSibling);
+  let nextInsertIndex = items.length;
+  for (let i = 0; i < items.length; i += 1) {
+    const rect = items[i].getBoundingClientRect();
+    if (clientY < rect.top + rect.height * 0.5) {
+      nextInsertIndex = i;
+      break;
+    }
   }
+
+  const prevIndex = state.drag.lastInsertIndex;
+  if (typeof prevIndex === 'number' && Math.abs(nextInsertIndex - prevIndex) === 1) {
+    const pivot = Math.max(nextInsertIndex, prevIndex) - 1;
+    if (pivot >= 0 && pivot < items.length) {
+      const pivotRect = items[pivot].getBoundingClientRect();
+      const boundary = pivotRect.top + pivotRect.height * 0.5;
+      if (Math.abs(clientY - boundary) < 14) {
+        nextInsertIndex = prevIndex;
+      }
+    }
+  }
+
+  if (nextInsertIndex === prevIndex) return;
+
+  const referenceNode = items[nextInsertIndex] || null;
+  list.insertBefore(state.drag.placeholderEl, referenceNode);
+  state.drag.lastInsertIndex = nextInsertIndex;
+}
+
+function applyDraftReorder() {
+  if (!state.editModal.draft || state.editModal.draft.items.length <= 1) return;
+
+  const sourceIndex = state.drag.sourceIndex;
+  const insertIndex = typeof state.drag.lastInsertIndex === 'number' ? state.drag.lastInsertIndex : sourceIndex;
+  if (sourceIndex < 0 || insertIndex < 0 || sourceIndex === insertIndex) return;
+
+  const moved = state.editModal.draft.items.splice(sourceIndex, 1)[0];
+  state.editModal.draft.items.splice(insertIndex, 0, moved);
 }
 
 async function resetChecklistStorageAndReload() {
-  if (state.running) {
-    alert('타이머 진행 중에는 체크리스트를 초기화할 수 없습니다.');
-    return;
-  }
-
-  const confirmed = window.confirm('체크리스트를 초기화하면 로컬 수정 내용이 지워지고 txt 원본을 다시 불러옵니다. 진행할까요?');
-  if (!confirmed) return;
-
   localStorage.removeItem(STORAGE_KEY);
   data = structuredClone(defaultData);
 
   await bootstrapChecklistsFromTxt();
 
-  state.editDraft = null;
-  el.manageModal.classList.add('hidden');
+  closeManageModal();
+  closeDeleteModal();
 
   el.durationInput.value = String(data.durationMin);
   state.targetMs = data.durationMin * 60 * 1000;
@@ -561,11 +537,6 @@ async function resetChecklistStorageAndReload() {
   updateButtons();
   updateStatus();
   renderTimer(state.pausedElapsedMs);
-}
-
-function getDraftChecklistById(id) {
-  if (!state.editDraft) return null;
-  return state.editDraft.checklists.find((c) => c.id === id) || null;
 }
 
 function startTimer() {
@@ -701,7 +672,9 @@ function updateButtons() {
   el.durationInput.disabled = state.running || state.pausedElapsedMs > 0;
   el.checklistSelect.disabled = state.running;
   el.resetChecklistBtn.disabled = state.running;
-  el.manageToggleBtn.disabled = state.running;
+  if (el.openAddChecklistBtn) el.openAddChecklistBtn.disabled = state.running;
+  if (el.openEditChecklistBtn) el.openEditChecklistBtn.disabled = state.running;
+  if (el.openDeleteChecklistBtn) el.openDeleteChecklistBtn.disabled = state.running;
 }
 
 function resetChecklistRunState() {

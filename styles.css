@@ -86,6 +86,25 @@ body {
   flex-wrap: wrap;
 }
 
+.checklist-inline-select {
+  min-width: 220px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.checklist-select-row {
+  margin-top: 6px;
+}
+
+.checklist-actions {
+  margin: 10px 0 12px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .timer-top-row input,
 .manage-row input,
 .manage-row select,
@@ -193,6 +212,9 @@ body {
 .manage-items .draggable-item {
   cursor: grab;
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   transition: transform 0.12s ease, background-color 0.12s ease, opacity 0.12s ease;
 }
 
@@ -201,8 +223,7 @@ body {
 }
 
 .manage-items .draggable-item.dragging {
-  opacity: 0.35;
-  background: #eef4f7;
+  display: none;
 }
 
 .manage-items .drag-placeholder {
@@ -220,9 +241,19 @@ body {
   position: fixed;
   z-index: 30;
   pointer-events: none;
-  width: min(760px, calc(100vw - 48px));
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #fcfdff;
+  color: var(--ink);
   opacity: 0.92;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 14px 26px rgba(18, 34, 44, 0.22);
+  transform: scale(1.01);
+}
+
+.drag-ghost .item-delete {
+  display: none;
 }
 
 .active-checklist label {
@@ -288,6 +319,10 @@ body {
   padding: 16px;
   display: grid;
   gap: 10px;
+}
+
+.modal-small {
+  width: min(440px, calc(100vw - 24px));
 }
 
 .modal-actions {
