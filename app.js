@@ -29,7 +29,15 @@ const state = {
     twoMin: false,
     end: false
   },
-  editDraft: null
+  editDraft: null,
+  drag: {
+    active: false,
+    mode: null,
+    pointerId: null,
+    sourceIndex: -1,
+    placeholderEl: null,
+    ghostEl: null
+  }
 };
 
 const el = {
@@ -168,6 +176,14 @@ function bindEvents() {
   el.modalDeleteChecklistBtn.addEventListener('click', modalDeleteChecklist);
   el.modalRenameChecklistBtn.addEventListener('click', modalRenameChecklist);
   el.modalAddItemBtn.addEventListener('click', modalAddItem);
+  el.modalItemsList.addEventListener('dragstart', onModalItemsDragStart);
+  el.modalItemsList.addEventListener('dragover', onModalItemsDragOver);
+  el.modalItemsList.addEventListener('drop', onModalItemsDrop);
+  el.modalItemsList.addEventListener('dragend', onModalItemsDragEnd);
+  el.modalItemsList.addEventListener('pointerdown', onModalItemsPointerDown);
+  el.modalItemsList.addEventListener('pointermove', onModalItemsPointerMove);
+  el.modalItemsList.addEventListener('pointerup', onModalItemsPointerUpOrCancel);
+  el.modalItemsList.addEventListener('pointercancel', onModalItemsPointerUpOrCancel);
 }
 
 function openManageModal() {
@@ -187,6 +203,7 @@ function openManageModal() {
 }
 
 function closeManageModal() {
+  cleanupModalDrag();
   state.editDraft = null;
   el.manageModal.classList.add('hidden');
 }
@@ -220,6 +237,7 @@ function renderModalChecklistSelect() {
 
 function renderModalItems() {
   if (!state.editDraft) return;
+  cleanupModalDrag();
   state.editDraft.selectedId = el.modalChecklistSelect.value;
 
   el.modalItemsList.innerHTML = '';
@@ -234,6 +252,10 @@ function renderModalItems() {
 
   target.items.forEach((item, idx) => {
     const li = document.createElement('li');
+    li.className = 'draggable-item';
+    li.draggable = true;
+    li.dataset.index = String(idx);
+
     const row = document.createElement('div');
     row.className = 'item-row';
 
@@ -243,6 +265,7 @@ function renderModalItems() {
     const del = document.createElement('button');
     del.className = 'item-delete';
     del.textContent = '삭제';
+    del.setAttribute('draggable', 'false');
     del.addEventListener('click', () => modalDeleteItem(idx));
 
     row.appendChild(label);
@@ -326,6 +349,191 @@ function modalDeleteItem(idx) {
   if (!target) return;
   target.items.splice(idx, 1);
   renderModalItems();
+}
+
+function onModalItemsDragStart(event) {
+  if (state.drag.mode === 'touch') return;
+  const itemEl = event.target.closest('.draggable-item');
+  if (!itemEl || !state.editDraft) return;
+
+  const sourceIndex = parseInt(itemEl.dataset.index || '-1', 10);
+  if (Number.isNaN(sourceIndex) || sourceIndex < 0) return;
+
+  state.drag.active = true;
+  state.drag.mode = 'mouse';
+  state.drag.sourceIndex = sourceIndex;
+
+  const placeholder = document.createElement('li');
+  placeholder.className = 'drag-placeholder';
+  placeholder.style.height = `${itemEl.getBoundingClientRect().height}px`;
+  placeholder.textContent = '여기에 놓기';
+  state.drag.placeholderEl = placeholder;
+
+  itemEl.classList.add('dragging');
+  itemEl.after(placeholder);
+
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', String(sourceIndex));
+  }
+}
+
+function onModalItemsDragOver(event) {
+  if (!state.drag.active || !state.drag.placeholderEl) return;
+  event.preventDefault();
+
+  const target = event.target.closest('.draggable-item');
+  const list = el.modalItemsList;
+  const placeholder = state.drag.placeholderEl;
+  const dragging = list.querySelector('.draggable-item.dragging');
+
+  if (!target || target === dragging) {
+    list.appendChild(placeholder);
+    return;
+  }
+
+  const rect = target.getBoundingClientRect();
+  const before = event.clientY < rect.top + rect.height / 2;
+  if (before) {
+    list.insertBefore(placeholder, target);
+  } else {
+    list.insertBefore(placeholder, target.nextSibling);
+  }
+}
+
+function onModalItemsDrop(event) {
+  if (!state.drag.active || !state.editDraft || !state.drag.placeholderEl) return;
+  event.preventDefault();
+
+  applyModalItemReorder();
+
+  cleanupModalDrag();
+  renderModalItems();
+}
+
+function onModalItemsDragEnd() {
+  if (!state.drag.active) return;
+  cleanupModalDrag();
+  renderModalItems();
+}
+
+function cleanupModalDrag() {
+  const dragging = el.modalItemsList.querySelector('.draggable-item.dragging');
+  if (dragging) dragging.classList.remove('dragging');
+  if (state.drag.placeholderEl && state.drag.placeholderEl.parentNode) {
+    state.drag.placeholderEl.parentNode.removeChild(state.drag.placeholderEl);
+  }
+  if (state.drag.ghostEl && state.drag.ghostEl.parentNode) {
+    state.drag.ghostEl.parentNode.removeChild(state.drag.ghostEl);
+  }
+  state.drag.active = false;
+  state.drag.mode = null;
+  state.drag.pointerId = null;
+  state.drag.sourceIndex = -1;
+  state.drag.placeholderEl = null;
+  state.drag.ghostEl = null;
+}
+
+function applyModalItemReorder() {
+  const target = getDraftChecklistById(el.modalChecklistSelect.value);
+  if (!target || target.items.length <= 1) return;
+
+  const sourceIndex = state.drag.sourceIndex;
+  const children = Array.from(el.modalItemsList.children);
+  const placeholderIndex = children.indexOf(state.drag.placeholderEl);
+  if (sourceIndex < 0 || placeholderIndex < 0) return;
+
+  let insertIndex = 0;
+  for (let i = 0; i < placeholderIndex; i += 1) {
+    if (children[i].classList.contains('draggable-item') && !children[i].classList.contains('dragging')) {
+      insertIndex += 1;
+    }
+  }
+
+  const moved = target.items.splice(sourceIndex, 1)[0];
+  target.items.splice(insertIndex, 0, moved);
+}
+
+function onModalItemsPointerDown(event) {
+  if (event.pointerType !== 'touch') return;
+  if (!state.editDraft) return;
+  if (event.target.closest('.item-delete')) return;
+
+  const itemEl = event.target.closest('.draggable-item');
+  if (!itemEl) return;
+
+  const sourceIndex = parseInt(itemEl.dataset.index || '-1', 10);
+  if (Number.isNaN(sourceIndex) || sourceIndex < 0) return;
+
+  event.preventDefault();
+  cleanupModalDrag();
+
+  state.drag.active = true;
+  state.drag.mode = 'touch';
+  state.drag.pointerId = event.pointerId;
+  state.drag.sourceIndex = sourceIndex;
+
+  const placeholder = document.createElement('li');
+  placeholder.className = 'drag-placeholder';
+  placeholder.style.height = `${itemEl.getBoundingClientRect().height}px`;
+  placeholder.textContent = '여기에 놓기';
+  state.drag.placeholderEl = placeholder;
+
+  itemEl.classList.add('dragging');
+  itemEl.after(placeholder);
+
+  const ghost = itemEl.cloneNode(true);
+  ghost.classList.add('drag-ghost');
+  document.body.appendChild(ghost);
+  state.drag.ghostEl = ghost;
+  moveTouchGhost(event.clientX, event.clientY);
+}
+
+function onModalItemsPointerMove(event) {
+  if (!state.drag.active || state.drag.mode !== 'touch') return;
+  if (state.drag.pointerId !== event.pointerId) return;
+
+  event.preventDefault();
+  moveTouchGhost(event.clientX, event.clientY);
+  movePlaceholderFromPoint(event.clientX, event.clientY);
+}
+
+function onModalItemsPointerUpOrCancel(event) {
+  if (!state.drag.active || state.drag.mode !== 'touch') return;
+  if (state.drag.pointerId !== event.pointerId) return;
+
+  event.preventDefault();
+  applyModalItemReorder();
+  cleanupModalDrag();
+  renderModalItems();
+}
+
+function moveTouchGhost(clientX, clientY) {
+  if (!state.drag.ghostEl) return;
+  state.drag.ghostEl.style.left = `${clientX + 12}px`;
+  state.drag.ghostEl.style.top = `${clientY - 16}px`;
+}
+
+function movePlaceholderFromPoint(clientX, clientY) {
+  if (!state.drag.placeholderEl) return;
+  const pointEl = document.elementFromPoint(clientX, clientY);
+  const target = pointEl ? pointEl.closest('.draggable-item') : null;
+  const list = el.modalItemsList;
+  const placeholder = state.drag.placeholderEl;
+  const dragging = list.querySelector('.draggable-item.dragging');
+
+  if (!target || target === dragging) {
+    list.appendChild(placeholder);
+    return;
+  }
+
+  const rect = target.getBoundingClientRect();
+  const before = clientY < rect.top + rect.height / 2;
+  if (before) {
+    list.insertBefore(placeholder, target);
+  } else {
+    list.insertBefore(placeholder, target.nextSibling);
+  }
 }
 
 async function resetChecklistStorageAndReload() {
