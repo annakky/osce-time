@@ -1,0 +1,92 @@
+﻿<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>의대생 시험 타이머</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=SUIT:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg-shape shape-1" aria-hidden="true"></div>
+  <div class="bg-shape shape-2" aria-hidden="true"></div>
+
+  <main class="app">
+    <header class="header">
+      <h1>의대생 시험 진행 타이머</h1>
+      <p>시험 시간 관리 + 체크리스트 수행 확인</p>
+    </header>
+
+    <section class="panel timer-panel">
+      <div class="timer-top-row">
+        <label for="durationInput">시험 시간(분)</label>
+        <input id="durationInput" type="number" min="1" max="180" step="1" value="12" />
+      </div>
+
+      <div class="timer-display-wrap">
+        <div id="timerDisplay" class="timer-display" aria-live="polite">12:00</div>
+        <div id="timerStatus" class="timer-status">대기 중</div>
+      </div>
+
+      <div class="timer-controls">
+        <button id="startBtn" class="btn btn-primary">시작</button>
+        <button id="pauseBtn" class="btn" disabled>멈춤</button>
+        <button id="lapBtn" class="btn" disabled>랩 기록</button>
+        <button id="resetBtn" class="btn btn-danger">초기화</button>
+      </div>
+
+      <section class="laps">
+        <h2>랩 기록</h2>
+        <ul id="lapList"></ul>
+      </section>
+    </section>
+
+    <section class="panel checklist-panel">
+      <div class="checklist-head">
+        <h2>체크리스트</h2>
+        <button id="manageToggleBtn" class="btn btn-small">체크리스트 수정</button>
+      </div>
+
+      <div class="checklist-selector">
+        <label for="checklistSelect">사용할 체크리스트 선택</label>
+        <select id="checklistSelect"></select>
+      </div>
+
+      <p class="helper">시험 시작 전에 체크리스트를 선택하세요. 시작 시 체크 상태는 자동 초기화됩니다.</p>
+
+      <ul id="activeChecklist" class="active-checklist"></ul>
+
+      <section id="manageSection" class="manage-section hidden">
+        <h3>체크리스트 관리</h3>
+
+        <div class="manage-row">
+          <input id="newChecklistName" type="text" placeholder="새 체크리스트 이름" />
+          <button id="addChecklistBtn" class="btn btn-small">체크리스트 추가</button>
+        </div>
+
+        <div class="manage-row">
+          <label for="manageChecklistSelect">수정 대상</label>
+          <select id="manageChecklistSelect"></select>
+          <button id="deleteChecklistBtn" class="btn btn-small btn-danger">선택 삭제</button>
+        </div>
+
+        <div class="manage-row">
+          <input id="renameChecklistInput" type="text" placeholder="체크리스트 이름 변경" />
+          <button id="renameChecklistBtn" class="btn btn-small">이름 변경</button>
+        </div>
+
+        <div class="manage-row">
+          <input id="newItemInput" type="text" placeholder="새 항목 추가" />
+          <button id="addItemBtn" class="btn btn-small">항목 추가</button>
+        </div>
+
+        <ul id="manageItemsList" class="manage-items"></ul>
+      </section>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
