@@ -1,4 +1,5 @@
 ﻿const STORAGE_KEY = 'med-exam-timer-v1';
+const MANIFEST_PATH = 'checklists-manifest.json';
 const DEFAULT_DURATION_MIN = 12;
 
 const defaultData = {
@@ -54,9 +55,11 @@ const el = {
   manageItemsList: document.getElementById('manageItemsList')
 };
 
-init();
+void init();
 
-function init() {
+async function init() {
+  await syncChecklistsFromTxt();
+
   el.durationInput.value = String(data.durationMin);
   state.targetMs = data.durationMin * 60 * 1000;
 
@@ -70,6 +73,54 @@ function init() {
   updateStatus();
 
   bindEvents();
+}
+
+async function syncChecklistsFromTxt() {
+  try {
+    const manifestRes = await fetch(`${MANIFEST_PATH}?t=${Date.now()}`, { cache: 'no-store' });
+    if (!manifestRes.ok) return;
+
+    const files = await manifestRes.json();
+    if (!Array.isArray(files) || files.length === 0) return;
+
+    const imported = [];
+    for (const file of files) {
+      if (typeof file !== 'string' || !file.toLowerCase().endsWith('.txt')) continue;
+
+      const txtRes = await fetch(`${encodeURI(file)}?t=${Date.now()}`, { cache: 'no-store' });
+      if (!txtRes.ok) continue;
+
+      const raw = await txtRes.text();
+      const items = raw
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+
+      imported.push({
+        id: `file-${file}`,
+        name: file.replace(/\.txt$/i, ''),
+        items
+      });
+    }
+
+    if (imported.length === 0) return;
+
+    const map = new Map(data.checklists.map((c) => [c.id, c]));
+    imported.forEach((c) => map.set(c.id, c));
+    data.checklists = Array.from(map.values());
+
+    if (data.checklists.some((c) => c.id.startsWith('file-'))) {
+      data.checklists = data.checklists.filter((c) => c.id !== 'default-osce');
+    }
+
+    if (!getChecklistById(data.selectedChecklistId)) {
+      data.selectedChecklistId = data.checklists[0]?.id || '';
+    }
+
+    saveData();
+  } catch (_) {
+    // file:// 로 직접 열면 fetch가 제한될 수 있으므로 기존 로컬 데이터로 계속 동작한다.
+  }
 }
 
 function bindEvents() {
